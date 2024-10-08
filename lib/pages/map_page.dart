@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:ui' as ui;
 import 'dart:typed_data';
 import 'dart:convert';
+import 'package:intl/intl.dart';
 
 class DeviceInfo {
   final String id;
@@ -16,7 +17,7 @@ class DeviceInfo {
     required this.id,
     required this.location,
     required this.lastActivity,
-    this.isActive = true,
+    this.isActive = false,
   });
 }
 
@@ -28,43 +29,58 @@ class MapPage extends StatefulWidget {
 }
 
 class _MapPageState extends State<MapPage> {
-  static const LatLng _defaultCenter = LatLng(-6.2735128, 106.6646446);
+  static const LatLng _defaultCenter = LatLng(-8.6776782, 115.2611143);
   final Map<String, DeviceInfo> _devices = {};
   int _activeDevices = 0;
+  DateTime _lastUpdateTime = DateTime.now();
 
   GoogleMapController? _mapController;
   Timer? _dataFetchTimer;
-  Timer? _deviceStatusTimer;
+  Timer? _inactivityCheckTimer;
   BitmapDescriptor? _activeMarkerIcon;
   BitmapDescriptor? _inactiveMarkerIcon;
 
-  static const Duration _activityThreshold = Duration(seconds: 11);
+  static const Duration _inactivityThreshold = Duration(minutes: 2);
+  static const Duration _deactivationDuration = Duration(minutes: 2);
 
   final Map<String, LatLng> _manualCoordinates = {
-    'id-18-test': LatLng(-6.273461, 106.666460),
-    'id-19-test': LatLng(-6.273821, 106.666095),
-    'id-20-test': LatLng(-6.274412, 106.665484),
+    'id-18-test': LatLng(-8.679664, 115.260628),
+    'id-19-test': LatLng(-8.679740, 115.261846),
+    'id-20-test': LatLng(-8.675548, 115.261195),
   };
 
   @override
   void initState() {
     super.initState();
     _createMarkerIcons();
+    _initializeDevices();
     _startDataFetchTimer();
-    _startDeviceStatusTimer();
+    _startInactivityCheckTimer();
+  }
+
+  void _initializeDevices() {
+    _manualCoordinates.forEach((id, location) {
+      _devices[id] = DeviceInfo(
+        id: id,
+        location: location,
+        lastActivity: DateTime.now().subtract(Duration(seconds: 5)),
+        isActive: false,
+      );
+    });
+    _updateActiveDeviceCount();
   }
 
   @override
   void dispose() {
     _dataFetchTimer?.cancel();
-    _deviceStatusTimer?.cancel();
+    _inactivityCheckTimer?.cancel();
     _mapController?.dispose();
     super.dispose();
   }
 
   Future<void> _createMarkerIcons() async {
     _activeMarkerIcon = await _createCustomMarkerBitmap(Colors.red);
-    _inactiveMarkerIcon = await _createCustomMarkerBitmap(Colors.blue);
+    _inactiveMarkerIcon = await _createCustomMarkerBitmap(Colors.green);
     setState(() {});
   }
 
@@ -73,13 +89,15 @@ class _MapPageState extends State<MapPage> {
     final canvas = Canvas(pictureRecorder);
     final paint = Paint()..color = color;
 
-    canvas.drawCircle(Offset(24, 24), 12, paint);
+    canvas.drawCircle(Offset(12, 12), 12, paint); // Lingkaran luar
 
-    final centerDotPaint = Paint()..color = Colors.white;
-    canvas.drawCircle(Offset(24, 24), 4, centerDotPaint);
+    final centerPaint = Paint()..color = Colors.white;
+    canvas.drawCircle(Offset(12, 12), 6, centerPaint); // Lingkaran tengah
+
+    canvas.drawCircle(Offset(12, 12), 4, paint); // Lingkaran dalam
 
     final picture = pictureRecorder.endRecording();
-    final image = await picture.toImage(48, 48);
+    final image = await picture.toImage(24, 24); // Ubah ukuran gambar marker
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
 
     return BitmapDescriptor.fromBytes(bytes!.buffer.asUint8List());
@@ -91,33 +109,22 @@ class _MapPageState extends State<MapPage> {
     });
   }
 
-  void _startDeviceStatusTimer() {
-    _deviceStatusTimer = Timer.periodic(Duration(seconds: 1), (timer) {
-      _updateDeviceStatuses();
+  void _startInactivityCheckTimer() {
+    _inactivityCheckTimer = Timer.periodic(Duration(seconds: 1), (timer) {
+      _checkDeviceInactivity();
     });
   }
 
-  void _updateDeviceStatuses() {
-    final now = DateTime.now();
-    bool statusChanged = false;
-
-    _devices.forEach((id, device) {
-      if (now.difference(device.lastActivity) > _activityThreshold) {
-        if (device.isActive) {
-          device.isActive = false;
-          statusChanged = true;
-          print("Device $id is now inactive");
-        }
-      }
+  void _updateActiveDeviceCount() {
+    setState(() {
+      _activeDevices =
+          _devices.values.where((device) => device.isActive).length;
     });
-
-    if (statusChanged) {
-      setState(() {
-        _activeDevices =
-            _devices.values.where((device) => device.isActive).length;
-      });
-      _fitBounds();
-    }
+    print("Active devices count: $_activeDevices");
+    _devices.forEach((id, device) {
+      print(
+          "Device $id - Active: ${device.isActive}, Last activity: ${device.lastActivity}");
+    });
   }
 
   Future<void> _fetchDataFromServer() async {
@@ -125,8 +132,13 @@ class _MapPageState extends State<MapPage> {
       final response =
           await http.get(Uri.parse('http://202.157.187.108:3000/data'));
       if (response.statusCode == 200) {
-        final List<dynamic> data = json.decode(response.body);
+        final data = json.decode(response.body);
+        print("Received data: $data");
         _updateDeviceInfo(data);
+        setState(() {
+          _lastUpdateTime = DateTime.now();
+        });
+        print("Data processed at $_lastUpdateTime");
       } else {
         print('Failed to fetch data: ${response.statusCode}');
       }
@@ -135,38 +147,84 @@ class _MapPageState extends State<MapPage> {
     }
   }
 
-  void _updateDeviceInfo(List<dynamic> data) {
-    bool dataUpdated = false;
-    for (var item in data) {
-      if (item is Map<String, dynamic>) {
-        final String deviceId = item['end_device_ids']['device_id'];
-        if (_manualCoordinates.containsKey(deviceId)) {
-          final LatLng location = _manualCoordinates[deviceId]!;
-          final DateTime timestamp = DateTime.parse(item['received_at']);
+  void _updateDeviceInfo(dynamic data) {
+    final now = DateTime.now();
+    bool statusChanged = false;
 
+    if (data is List && data.isNotEmpty) {
+      for (var item in data) {
+        if (item is Map<String, dynamic>) {
+          final String deviceId = item['end_device_ids']['device_id'];
           if (_devices.containsKey(deviceId)) {
-            _devices[deviceId]!.lastActivity = timestamp;
-            _devices[deviceId]!.isActive = true;
-          } else {
-            _devices[deviceId] = DeviceInfo(
-              id: deviceId,
-              location: location,
-              lastActivity: timestamp,
-              isActive: true,
-            );
-          }
+            final DeviceInfo device = _devices[deviceId]!;
 
-          dataUpdated = true;
+            // Hanya perbarui waktu aktivitas terakhir jika perangkat aktif
+            if (!device.isActive) {
+              device.isActive = true; // Aktifkan perangkat
+              device.lastActivity = now; // Update waktu aktivitas terakhir
+              statusChanged = true;
+              print("Device $deviceId activated at ${now}");
+
+              // Set a timer to deactivate the device after 5 minutes
+              Timer(_deactivationDuration, () {
+                setState(() {
+                  device.isActive = false; // Deactivate the device
+                  print("Device $deviceId deactivated after 5 minutes.");
+                  _updateActiveDeviceCount();
+                });
+              });
+            } else {
+              // Jika perangkat sudah aktif, cukup perbarui waktu aktivitas terakhir
+              device.lastActivity = now; // Perbarui waktu aktivitas terakhir
+            }
+          }
         }
       }
     }
 
-    if (dataUpdated) {
-      setState(() {
-        _activeDevices =
-            _devices.values.where((device) => device.isActive).length;
+    // Periksa semua perangkat aktif yang ada
+    _checkDeviceInactivity();
+
+    if (statusChanged) {
+      _updateActiveDeviceCount();
+    }
+  }
+
+  void _checkDeviceInactivity() {
+    final now = DateTime.now();
+    bool statusChanged = false;
+
+    _devices.forEach((id, device) {
+      if (device.isActive &&
+          now.difference(device.lastActivity) > _inactivityThreshold) {
+        device.isActive =
+            false; // Matikan perangkat jika tidak aktif selama threshold
+        statusChanged = true;
+        print(
+            "Device $id deactivated due to inactivity. Last activity: ${device.lastActivity}");
+      }
+    });
+
+    if (statusChanged) {
+      _updateActiveDeviceCount();
+    }
+  }
+
+  void _resetAllDevices() {
+    setState(() {
+      _devices.forEach((id, device) {
+        device.isActive = false; // Matikan perangkat
+        // Biarkan waktu aktivitas terakhir tetap
+        print("Device $id has been reset to inactive");
       });
-      _fitBounds();
+      _updateActiveDeviceCount();
+      _lastUpdateTime = DateTime.now();
+    });
+  }
+
+  void _resetMapToDefault() {
+    if (_mapController != null) {
+      _mapController!.animateCamera(CameraUpdate.newLatLng(_defaultCenter));
     }
   }
 
@@ -196,20 +254,12 @@ class _MapPageState extends State<MapPage> {
           : device.location.longitude;
     });
 
-    final bounds = LatLngBounds(
-      southwest: LatLng(minLat, minLng),
+    LatLngBounds bounds = LatLngBounds(
       northeast: LatLng(maxLat, maxLng),
+      southwest: LatLng(minLat, minLng),
     );
 
-    _mapController!.animateCamera(CameraUpdate.newLatLngBounds(bounds, 50.0));
-  }
-
-  void _resetMapToDefault() {
-    _mapController?.animateCamera(
-      CameraUpdate.newCameraPosition(
-        CameraPosition(target: _defaultCenter, zoom: 10),
-      ),
-    );
+    _mapController!.animateCamera(CameraUpdate.newLatLngBounds(bounds, 50));
   }
 
   Set<Marker> _createMarkers() {
@@ -217,50 +267,39 @@ class _MapPageState extends State<MapPage> {
       return Marker(
         markerId: MarkerId(device.id),
         position: device.location,
-        icon: device.isActive
-            ? _activeMarkerIcon ?? BitmapDescriptor.defaultMarker
-            : _inactiveMarkerIcon ?? BitmapDescriptor.defaultMarker,
+        icon: device.isActive ? _activeMarkerIcon! : _inactiveMarkerIcon!,
         infoWindow: InfoWindow(
           title: device.id,
-          snippet: device.isActive ? 'Active' : 'Inactive',
-          onTap: () => _showInfoDialog(device),
+          snippet:
+              'Last activity: ${DateFormat('yyyy-MM-dd – kk:mm:ss').format(device.lastActivity)}',
+          onTap: () {
+            _showInfoDialog(device);
+          },
         ),
       );
     }).toSet();
   }
 
-  void _showInfoDialog(DeviceInfo device) {
-    showDialog(
+  Future<void> _showInfoDialog(DeviceInfo device) async {
+    return showDialog<void>(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: Text(device.id),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(device.isActive
-                  ? 'Device is currently active.'
-                  : 'Device is currently inactive.'),
-              SizedBox(height: 8),
-              Text('Last activity: ${device.lastActivity.toString()}'),
-              SizedBox(height: 8),
-              Text(
-                  'Location: ${device.location.latitude}, ${device.location.longitude}'),
-            ],
+          title: Text('Device Info - ${device.id}'),
+          content: SingleChildScrollView(
+            child: ListBody(
+              children: <Widget>[
+                Text('Status: ${device.isActive ? 'Active' : 'Inactive'}'),
+                Text('Last Activity: ${device.lastActivity}'),
+              ],
+            ),
           ),
           actions: <Widget>[
             TextButton(
-              child: Text('View Location'),
+              child: Text('Close'),
               onPressed: () {
                 Navigator.of(context).pop();
-                _mapController?.animateCamera(
-                    CameraUpdate.newLatLngZoom(device.location, 18));
               },
-            ),
-            TextButton(
-              child: Text('Close'),
-              onPressed: () => Navigator.of(context).pop(),
             ),
           ],
         );
@@ -271,31 +310,23 @@ class _MapPageState extends State<MapPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Stack(
-        children: [
-          GoogleMap(
-            onMapCreated: _onMapCreated,
-            initialCameraPosition:
-                CameraPosition(target: _defaultCenter, zoom: 10),
-            markers: _createMarkers(),
-          ),
-          Positioned(
-            top: 50,
-            left: 10,
-            child: Container(
-              padding: EdgeInsets.all(8),
-              color: Colors.white,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Last updated: ${DateTime.now()}'),
-                  Text('Active devices: $_activeDevices'),
-                  Text('Total devices: ${_devices.length}'),
-                ],
-              ),
-            ),
+      appBar: AppBar(
+        title: Text('Device Tracker'),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.refresh),
+            onPressed: _resetAllDevices,
           ),
         ],
+      ),
+      body: GoogleMap(
+        onMapCreated: _onMapCreated,
+        mapType: MapType.satellite,
+        markers: _createMarkers(),
+        initialCameraPosition: CameraPosition(
+          target: _defaultCenter,
+          zoom: 15,
+        ),
       ),
     );
   }
