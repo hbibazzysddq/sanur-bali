@@ -39,14 +39,30 @@ class _MapPageState extends State<MapPage> {
   Timer? _inactivityCheckTimer;
   BitmapDescriptor? _activeMarkerIcon;
   BitmapDescriptor? _inactiveMarkerIcon;
+  BitmapDescriptor? _gatewayMarkerIcon;
 
-  static const Duration _inactivityThreshold = Duration(minutes: 2);
-  static const Duration _deactivationDuration = Duration(minutes: 2);
+  static const Duration _inactivityThreshold = Duration(minutes: 1);
+  static const Duration _deactivationDuration = Duration(minutes: 5);
 
   final Map<String, LatLng> _manualCoordinates = {
-    'id-18-test': LatLng(-8.679664, 115.260628),
-    'id-19-test': LatLng(-8.679740, 115.261846),
-    'id-20-test': LatLng(-8.675548, 115.261195),
+    'id-1': LatLng(-8.679444, 115.260556),
+    'id-2': LatLng(-8.679722, 115.261389),
+    'Gateway 1': LatLng(-8.679722, 115.261667),
+    'id-3': LatLng(-8.679444, 115.262222),
+    'id-4': LatLng(-8.678611, 115.262500),
+    'id-5': LatLng(-8.677222, 115.262500),
+    'id-6': LatLng(-8.676389, 115.262222),
+    'id-7': LatLng(-8.675556, 115.261944),
+    'id-8': LatLng(-8.675556, 115.260833),
+    'Gateway 2': LatLng(-8.675833, 115.260833),
+    'id-9': LatLng(-8.676111, 115.260833),
+    'id-10': LatLng(-8.677222, 115.260556),
+    'id-11': LatLng(-8.677222, 115.260000),
+    'id-12': LatLng(-8.678056, 115.261944),
+    'id-13': LatLng(-8.678056, 115.260556),
+    'id-14': LatLng(-8.678056, 115.259722),
+    'id-15': LatLng(-8.676389, 115.261944),
+    'id-16': LatLng(-8.676667, 115.261111),
   };
 
   @override
@@ -81,6 +97,7 @@ class _MapPageState extends State<MapPage> {
   Future<void> _createMarkerIcons() async {
     _activeMarkerIcon = await _createCustomMarkerBitmap(Colors.red);
     _inactiveMarkerIcon = await _createCustomMarkerBitmap(Colors.green);
+    _gatewayMarkerIcon = await _createCustomMarkerBitmap(Colors.purple);
     setState(() {});
   }
 
@@ -89,15 +106,15 @@ class _MapPageState extends State<MapPage> {
     final canvas = Canvas(pictureRecorder);
     final paint = Paint()..color = color;
 
-    canvas.drawCircle(Offset(12, 12), 12, paint); // Lingkaran luar
+    canvas.drawCircle(Offset(12, 12), 12, paint);
 
     final centerPaint = Paint()..color = Colors.white;
-    canvas.drawCircle(Offset(12, 12), 6, centerPaint); // Lingkaran tengah
+    canvas.drawCircle(Offset(12, 12), 6, centerPaint);
 
-    canvas.drawCircle(Offset(12, 12), 4, paint); // Lingkaran dalam
+    canvas.drawCircle(Offset(12, 12), 4, paint);
 
     final picture = pictureRecorder.endRecording();
-    final image = await picture.toImage(24, 24); // Ubah ukuran gambar marker
+    final image = await picture.toImage(24, 24);
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
 
     return BitmapDescriptor.fromBytes(bytes!.buffer.asUint8List());
@@ -155,34 +172,34 @@ class _MapPageState extends State<MapPage> {
       for (var item in data) {
         if (item is Map<String, dynamic>) {
           final String deviceId = item['end_device_ids']['device_id'];
-          if (_devices.containsKey(deviceId)) {
+          if (_devices.containsKey(deviceId) &&
+              !deviceId.toLowerCase().contains('gateway')) {
             final DeviceInfo device = _devices[deviceId]!;
 
-            // Hanya perbarui waktu aktivitas terakhir jika perangkat aktif
             if (!device.isActive) {
-              device.isActive = true; // Aktifkan perangkat
-              device.lastActivity = now; // Update waktu aktivitas terakhir
+              device.isActive = true;
+              device.lastActivity = now;
               statusChanged = true;
               print("Device $deviceId activated at ${now}");
 
-              // Set a timer to deactivate the device after 5 minutes
+              // Show alert when device becomes active
+              _showDeviceActivationAlert(device);
+
               Timer(_deactivationDuration, () {
                 setState(() {
-                  device.isActive = false; // Deactivate the device
+                  device.isActive = false;
                   print("Device $deviceId deactivated after 5 minutes.");
                   _updateActiveDeviceCount();
                 });
               });
             } else {
-              // Jika perangkat sudah aktif, cukup perbarui waktu aktivitas terakhir
-              device.lastActivity = now; // Perbarui waktu aktivitas terakhir
+              device.lastActivity = now;
             }
           }
         }
       }
     }
 
-    // Periksa semua perangkat aktif yang ada
     _checkDeviceInactivity();
 
     if (statusChanged) {
@@ -197,8 +214,7 @@ class _MapPageState extends State<MapPage> {
     _devices.forEach((id, device) {
       if (device.isActive &&
           now.difference(device.lastActivity) > _inactivityThreshold) {
-        device.isActive =
-            false; // Matikan perangkat jika tidak aktif selama threshold
+        device.isActive = false;
         statusChanged = true;
         print(
             "Device $id deactivated due to inactivity. Last activity: ${device.lastActivity}");
@@ -213,8 +229,7 @@ class _MapPageState extends State<MapPage> {
   void _resetAllDevices() {
     setState(() {
       _devices.forEach((id, device) {
-        device.isActive = false; // Matikan perangkat
-        // Biarkan waktu aktivitas terakhir tetap
+        device.isActive = false;
         print("Device $id has been reset to inactive");
       });
       _updateActiveDeviceCount();
@@ -264,39 +279,56 @@ class _MapPageState extends State<MapPage> {
 
   Set<Marker> _createMarkers() {
     return _devices.values.map((device) {
-      return Marker(
-        markerId: MarkerId(device.id),
-        position: device.location,
-        icon: device.isActive ? _activeMarkerIcon! : _inactiveMarkerIcon!,
-        infoWindow: InfoWindow(
-          title: device.id,
-          snippet:
-              'Last activity: ${DateFormat('yyyy-MM-dd – kk:mm:ss').format(device.lastActivity)}',
-          onTap: () {
-            _showInfoDialog(device);
-          },
-        ),
-      );
+      if (device.id.toLowerCase().contains('gateway')) {
+        return Marker(
+          markerId: MarkerId(device.id),
+          position: device.location,
+          icon: _gatewayMarkerIcon!,
+          onTap: () => _showDeviceInfo(device),
+        );
+      } else {
+        return Marker(
+          markerId: MarkerId(device.id),
+          position: device.location,
+          icon: device.isActive ? _activeMarkerIcon! : _inactiveMarkerIcon!,
+          onTap: () => _showDeviceInfo(device),
+        );
+      }
     }).toSet();
   }
 
-  Future<void> _showInfoDialog(DeviceInfo device) async {
-    return showDialog<void>(
+  void _showDeviceActivationAlert(DeviceInfo device) {
+    showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: Text('Device Info - ${device.id}'),
-          content: SingleChildScrollView(
-            child: ListBody(
-              children: <Widget>[
-                Text('Status: ${device.isActive ? 'Active' : 'Inactive'}'),
-                Text('Last Activity: ${device.lastActivity}'),
-              ],
-            ),
+          title: Text('DANGER ALERT',
+              style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.red, size: 50),
+              SizedBox(height: 10),
+              Text('Device ${device.id} is ACTIVE!',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              Text(
+                  'Location: ${device.location.latitude}, ${device.location.longitude}'),
+            ],
           ),
-          actions: <Widget>[
+          backgroundColor: Colors.yellow,
+          actions: [
             TextButton(
-              child: Text('Close'),
+              child: Text('View on Map', style: TextStyle(color: Colors.red)),
+              onPressed: () {
+                Navigator.of(context).pop();
+                _mapController?.animateCamera(
+                  CameraUpdate.newLatLngZoom(device.location, 18),
+                );
+              },
+            ),
+            TextButton(
+              child: Text('Dismiss', style: TextStyle(color: Colors.black)),
               onPressed: () {
                 Navigator.of(context).pop();
               },
@@ -307,26 +339,135 @@ class _MapPageState extends State<MapPage> {
     );
   }
 
+  void _showDeviceInfo(DeviceInfo device) {
+    showModalBottomSheet(
+      context: context,
+      builder: (BuildContext context) {
+        bool isGateway = device.id.toLowerCase().contains('gateway');
+        return Container(
+          padding: EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                isGateway ? 'Gateway ${device.id}' : 'Device ${device.id}',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              ),
+              SizedBox(height: 16),
+              if (!isGateway) ...[
+                _buildInfoRow(
+                    'Status', device.isActive ? 'Active' : 'Inactive'),
+                _buildInfoRow(
+                    'Last Activity',
+                    DateFormat('yyyy-MM-dd – kk:mm:ss')
+                        .format(device.lastActivity)),
+              ],
+              _buildInfoRow('Location',
+                  '${device.location.latitude}, ${device.location.longitude}'),
+              SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _mapController?.animateCamera(
+                    CameraUpdate.newLatLngZoom(device.location, 18),
+                  );
+                },
+                child: Text('Zoom to ${isGateway ? 'Gateway' : 'Device'}'),
+                style: ElevatedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  backgroundColor: isGateway ? Colors.purple : Colors.blue,
+                  minimumSize: Size(double.infinity, 50),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildInfoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label,
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          Text(value, style: TextStyle(fontSize: 16)),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Device Tracker'),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.refresh),
-            onPressed: _resetAllDevices,
+      body: Stack(
+        children: [
+          GoogleMap(
+            onMapCreated: _onMapCreated,
+            mapType: MapType.satellite,
+            markers: _createMarkers(),
+            initialCameraPosition: CameraPosition(
+              target: _defaultCenter,
+              zoom: 15,
+            ),
+            myLocationButtonEnabled: false,
+            zoomControlsEnabled: false,
+          ),
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 10,
+            left: 10,
+            right: 10,
+            child: Card(
+              color: Colors.white.withOpacity(0.8),
+              child: Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Device Tracker',
+                          style: TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.bold),
+                        ),
+                        Text(
+                          'Active Devices: $_activeDevices',
+                          style: TextStyle(fontSize: 14),
+                        ),
+                        Text(
+                          'Last Update: ${DateFormat('yyyy-MM-dd – kk:mm:ss').format(_lastUpdateTime)}',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ],
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.refresh),
+                      onPressed: _resetAllDevices,
+                      tooltip: 'Reset all devices',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            right: 10,
+            bottom: 90,
+            child: FloatingActionButton(
+              onPressed: _fitBounds,
+              child: Icon(Icons.center_focus_strong),
+              tooltip: 'Fit all markers',
+              backgroundColor: Colors.white,
+              foregroundColor: Colors.blue,
+            ),
           ),
         ],
-      ),
-      body: GoogleMap(
-        onMapCreated: _onMapCreated,
-        mapType: MapType.satellite,
-        markers: _createMarkers(),
-        initialCameraPosition: CameraPosition(
-          target: _defaultCenter,
-          zoom: 15,
-        ),
       ),
     );
   }
