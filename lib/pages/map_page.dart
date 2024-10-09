@@ -137,7 +137,7 @@ class _MapPageState extends State<MapPage> {
       _activeDevices =
           _devices.values.where((device) => device.isActive).length;
     });
-    print("Active devices count: $_activeDevices");
+    print("Active Panic Button count: $_activeDevices");
     _devices.forEach((id, device) {
       print(
           "Device $id - Active: ${device.isActive}, Last activity: ${device.lastActivity}");
@@ -180,7 +180,7 @@ class _MapPageState extends State<MapPage> {
               device.isActive = true;
               device.lastActivity = now;
               statusChanged = true;
-              print("Device $deviceId activated at ${now}");
+              print("Panic Button $deviceId activated at ${now}");
 
               // Show alert when device becomes active
               _showDeviceActivationAlert(device);
@@ -188,7 +188,7 @@ class _MapPageState extends State<MapPage> {
               Timer(_deactivationDuration, () {
                 setState(() {
                   device.isActive = false;
-                  print("Device $deviceId deactivated after 5 minutes.");
+                  print("Panic Button $deviceId deactivated after 5 minutes.");
                   _updateActiveDeviceCount();
                 });
               });
@@ -217,7 +217,7 @@ class _MapPageState extends State<MapPage> {
         device.isActive = false;
         statusChanged = true;
         print(
-            "Device $id deactivated due to inactivity. Last activity: ${device.lastActivity}");
+            "Panic Button $id deactivated due to inactivity. Last activity: ${device.lastActivity}");
       }
     });
 
@@ -230,7 +230,7 @@ class _MapPageState extends State<MapPage> {
     setState(() {
       _devices.forEach((id, device) {
         device.isActive = false;
-        print("Device $id has been reset to inactive");
+        print("Panic Button $id has been reset to inactive");
       });
       _updateActiveDeviceCount();
       _lastUpdateTime = DateTime.now();
@@ -310,7 +310,7 @@ class _MapPageState extends State<MapPage> {
             children: [
               Icon(Icons.warning_amber_rounded, color: Colors.red, size: 50),
               SizedBox(height: 10),
-              Text('Device ${device.id} is ACTIVE!',
+              Text('Panic Button ${device.id} is ACTIVE!',
                   style: TextStyle(fontWeight: FontWeight.bold)),
               Text(
                   'Location: ${device.location.latitude}, ${device.location.longitude}'),
@@ -437,7 +437,7 @@ class _MapPageState extends State<MapPage> {
                               fontSize: 18, fontWeight: FontWeight.bold),
                         ),
                         Text(
-                          'Active Devices: $_activeDevices',
+                          'Active Panic Button: $_activeDevices',
                           style: TextStyle(fontSize: 14),
                         ),
                         Text(
